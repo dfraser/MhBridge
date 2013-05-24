@@ -10,6 +10,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import org.apache.log4j.Logger;
+import org.reficio.ws.client.TransmissionException;
 
 import de.sciss.net.OSCListener;
 import de.sciss.net.OSCMessage;
@@ -33,6 +34,7 @@ public class MhBridge
     }
 	
 	public void run() throws IOException {
+		log.info("MhBridge starting...");
 		// load properties
 		Properties properties = new Properties();
 		InputStream in = getClass().getResourceAsStream("/mhbridge.properties");
@@ -46,6 +48,8 @@ public class MhBridge
 		// TODO: some error checking might be nice
 		String soapEndpoint = properties.getProperty("misterHouseSoapEndpoint");
 		int oscPort = Integer.parseInt(properties.getProperty("oscPort"));
+		log.info("soap endpoint: "+soapEndpoint);
+		log.info("osc listen port: "+oscPort);
 		
 		mhc = new MisterHouseSoap(soapEndpoint);
 		try {
@@ -74,7 +78,7 @@ public class MhBridge
 		    });
 		 
          c.start();
-         
+         log.info("ready & running.");
          try {
      		Map<String,Double> oldState = new HashMap<>();
         	while (true) {
@@ -93,16 +97,20 @@ public class MhBridge
         					continue;
         				}
         				
-        				// parse the osc value into misterhouse state, and set it with SOAP api.
-        				if (state.get(key) == 1.0) {
-        					mhc.control(mhItem, "on");
-        				} if (state.get(key) == 0.0) {
-        					mhc.control(mhItem, "off");
-        				} else {
-        					Double val = state.get(key);
-        					// convert to percentage
-        					int percent = (int) (val.doubleValue() * 100);
-        					mhc.control(mhItem, percent+"%");
+        				try {
+	        				// parse the osc value into misterhouse state, and set it with SOAP api.
+	        				if (state.get(key) == 1.0) {
+	        					mhc.control(mhItem, "on");
+	        				} if (state.get(key) == 0.0) {
+	        					mhc.control(mhItem, "off");
+	        				} else {
+	        					Double val = state.get(key);
+	        					// convert to percentage
+	        					int percent = (int) (val.doubleValue() * 100);
+	        					mhc.control(mhItem, percent+"%");
+	        				}
+        				} catch (TransmissionException e) {
+        					log.error("transmission error: "+e.getMessage(),e);
         				}
 
         			}
