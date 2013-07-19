@@ -2,6 +2,7 @@ package org.capybara.mhbridge;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.HashMap;
 import java.util.Map;
@@ -23,9 +24,15 @@ public class MhBridge
 	
 	private OSCServer c;
 	
-	private ConcurrentMap<String, Double> state = new ConcurrentHashMap<>();
+//	private ConcurrentMap<String, Double> state = new ConcurrentHashMap<>();
 
 	private static MisterHouseSoap mhc;
+
+	private int oscPort;
+
+	private int oscReplyPort;
+
+	private String soapEndpoint;
 
 	public static void main( String[] args ) throws IOException
     {
@@ -45,11 +52,12 @@ public class MhBridge
 		properties.load(in);
 		in.close();
 		
-		// TODO: some error checking might be nice
-		String soapEndpoint = properties.getProperty("misterHouseSoapEndpoint");
-		int oscPort = Integer.parseInt(properties.getProperty("oscPort"));
+		soapEndpoint = properties.getProperty("misterHouseSoapEndpoint");
+		oscPort = Integer.parseInt(properties.getProperty("oscPort"));
+		oscReplyPort = Integer.parseInt(properties.getProperty("oscReplyPort"));
 		log.info("soap endpoint: "+soapEndpoint);
 		log.info("osc listen port: "+oscPort);
+		log.info("osc reply port: "+oscReplyPort);
 		
 		mhc = new MisterHouseSoap(soapEndpoint);
 		try {
@@ -71,57 +79,81 @@ public class MhBridge
 		        {
 		        	if (m.getArgCount() > 0) {
 		        		if (m.getArg(0) instanceof Float) {
-		        			state.put(m.getName(),new Double((Float)m.getArg(0)));
+		        			try {
+		        				Double value = new Double((Float)m.getArg(0));
+		        				if (value != 1.0) {
+		        					log.debug("skipping non-1.0 message");
+		        					return;
+		        				}
+		        				InetSocketAddress rxAddr = (InetSocketAddress) addr;
+		        				InetSocketAddress txAddr = new InetSocketAddress(rxAddr.getAddress(), oscReplyPort);
+			        			setBusy(true, txAddr);
+			        			handleMessage(m.getName(),value);
+			        			Thread.sleep(100);			
+			        			setBusy(false, txAddr);
+		        			} catch(Exception e) {
+		        				log.error("error handling message: "+e.getMessage(),e);
+		        			}
 		        		}
 		        	}
 		        }
 		    });
 		 
          c.start();
+         
          log.info("ready & running.");
-         try {
-     		Map<String,Double> oldState = new HashMap<>();
-        	while (true) {
-        		Thread.sleep(500);
-        		for (String key : state.keySet()) {
-        			if (!state.get(key).equals(oldState.get(key))) {
-        				
-        				// parse the osc name into the misterhouse item
-        				log.debug("key "+key+" new value: "+state.get(key));
-        				String keyParts[] = key.split("/");
-        				String mhItem;
-        				if (keyParts.length > 2) {
-							mhItem = keyParts[2];
-        					log.debug("item: "+mhItem);
-        				} else {
-        					continue;
-        				}
-        				
-        				try {
-	        				// parse the osc value into misterhouse state, and set it with SOAP api.
-	        				if (state.get(key) == 1.0) {
-	        					mhc.control(mhItem, "on");
-	        				} if (state.get(key) == 0.0) {
-	        					mhc.control(mhItem, "off");
-	        				} else {
-	        					Double val = state.get(key);
-	        					// convert to percentage
-	        					int percent = (int) (val.doubleValue() * 100);
-	        					mhc.control(mhItem, percent+"%");
-	        				}
-        				} catch (TransmissionException e) {
-        					log.error("transmission error: "+e.getMessage(),e);
-        				}
-
-        			}
-        		}
-        		oldState.clear();
-        		oldState = new HashMap<>(state);
-        	}
-		} catch (InterruptedException e) {
-			// nothing to do but exit...
-			log.debug("interrupted.  cleaning up and exiting...");
+         while (true) {
+        	 try {
+				Thread.sleep(500);
+			} catch (InterruptedException e) {
+				break;
+			}   	 
+         }
+         c.stop();
+     
+	}
+	
+	
+	public void handleMessage(String key, Double value) {
+		if (value != 1.0) {
+			return;
 		}
-        c.stop();
+		// parse the osc name into the misterhouse item
+		log.debug("key "+key+" new value: "+value);
+		String keyParts[] = key.split("/");
+		String mhItem;
+		String mhValue;
+		if (keyParts.length > 3) {
+			mhItem = keyParts[2];
+			log.debug("item: "+mhItem);
+			mhValue = keyParts[3];
+		} else {
+			return;
+		}
+		
+		int tries = 2;
+		while (tries > 0) {
+			try {
+				mhc.control(mhItem,mhValue);
+				break;
+			} catch (TransmissionException e) {
+				log.error("transmission error: "+e.getMessage(),e);
+			}
+			log.debug("retrying...");
+			tries--;
+		}
+
+
+	}
+	
+	public void setBusy(boolean busy, SocketAddress addr) throws IOException {
+		Double[] args;
+		if (busy) {
+			args = new Double[] { 1.0 };
+		} else {
+			args = new Double[] { 0.0 };
+		}
+		log.debug("sending busy: "+args[0]);
+		c.send(new OSCMessage("/busy", args), addr);
 	}
 }
