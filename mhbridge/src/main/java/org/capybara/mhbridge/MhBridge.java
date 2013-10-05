@@ -4,11 +4,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 import org.apache.log4j.Logger;
 import org.reficio.ws.client.TransmissionException;
@@ -33,6 +31,8 @@ public class MhBridge
 	private int oscReplyPort;
 
 	private String soapEndpoint;
+	
+	private String[] controls = { "bedside_r", "kitchen_ceiling", "front_dr_ceiling", "kitchen_fan", "hall_ceiling", "dining_rm_ceiling" };
 
 	public static void main( String[] args ) throws IOException
     {
@@ -88,7 +88,7 @@ public class MhBridge
 		        				InetSocketAddress rxAddr = (InetSocketAddress) addr;
 		        				InetSocketAddress txAddr = new InetSocketAddress(rxAddr.getAddress(), oscReplyPort);
 			        			setBusy(true, txAddr);
-			        			handleMessage(m.getName(),value);
+			        			handleMessage(m.getName(),value,txAddr);
 			        			Thread.sleep(100);			
 			        			setBusy(false, txAddr);
 		        			} catch(Exception e) {
@@ -114,7 +114,7 @@ public class MhBridge
 	}
 	
 	
-	public void handleMessage(String key, Double value) {
+	public void handleMessage(String key, Double value, InetSocketAddress txAddr) throws IOException {
 		if (value != 1.0) {
 			return;
 		}
@@ -128,13 +128,18 @@ public class MhBridge
 			log.debug("item: "+mhItem);
 			mhValue = keyParts[3];
 		} else {
+			if (key.equals("/sync")) {
+				syncButtons(txAddr);
+			}
 			return;
 		}
 		
 		int tries = 2;
 		while (tries > 0) {
 			try {
+				setScale(mhItem,mhValue,txAddr);
 				mhc.control(mhItem,mhValue);
+//				sendMessage(key, 1, txAddr);
 				break;
 			} catch (TransmissionException e) {
 				log.error("transmission error: "+e.getMessage(),e);
@@ -146,6 +151,30 @@ public class MhBridge
 
 	}
 	
+	private void syncButtons(InetSocketAddress txAddr) throws IOException {
+		for (String device : controls) {
+			log.debug("querying device: "+device);
+			String value = mhc.query(device);
+			setScale(device,value,txAddr);
+			// set the scaleLevels
+		}
+		
+	}
+
+	private void setScale(String key, String mhValue, InetSocketAddress txAddr) throws IOException {
+		List<String> scaleLevels = new ArrayList<>();
+		scaleLevels.add("on");
+		scaleLevels.add("25%");
+		scaleLevels.add("50%");
+		scaleLevels.add("75%");
+		scaleLevels.add("off");
+		sendMessage("/item/"+key+"/"+mhValue, 1, txAddr);
+		scaleLevels.remove(mhValue);
+		for (String value : scaleLevels) {
+			sendMessage("/item/"+key+"/"+value,0,txAddr);
+		}	
+	}
+
 	public void setBusy(boolean busy, SocketAddress addr) throws IOException {
 		Double[] args;
 		if (busy) {
@@ -155,5 +184,17 @@ public class MhBridge
 		}
 		log.debug("sending busy: "+args[0]);
 		c.send(new OSCMessage("/busy", args), addr);
+	}
+	
+	public void sendMessage(String message, double value, SocketAddress addr) throws IOException {
+		Double[] args = { value };
+		c.send(new OSCMessage(message,args),addr);
+		log.debug("sent osc message: "+message+" value: "+value);
+		try {
+			Thread.sleep(50);
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 	}
 }
