@@ -22,8 +22,6 @@ public class MhBridge
 	
 	private OSCServer c;
 	
-//	private ConcurrentMap<String, Double> state = new ConcurrentHashMap<>();
-
 	private static MisterHouseSoap mhc;
 
 	private int oscPort;
@@ -32,8 +30,8 @@ public class MhBridge
 
 	private String soapEndpoint;
 	
-	private String[] controls = { "bedside_r", "kitchen_ceiling", "front_dr_ceiling", "kitchen_fan", "hall_ceiling", "dining_rm_ceiling" };
-
+	private List<String> controls = new ArrayList<>();
+	
 	public static void main( String[] args ) throws IOException
     {
 		MhBridge app = new MhBridge();
@@ -58,6 +56,14 @@ public class MhBridge
 		log.info("soap endpoint: "+soapEndpoint);
 		log.info("osc listen port: "+oscPort);
 		log.info("osc reply port: "+oscReplyPort);
+		
+		for (Object key : properties.keySet()) {
+			String strKey = (String) key;
+			if (strKey.startsWith("syncdevice.")) {
+				controls.add(properties.getProperty(strKey));
+			}
+		}
+		log.info("syncable controls list: "+controls);
 		
 		mhc = new MisterHouseSoap(soapEndpoint);
 		try {
