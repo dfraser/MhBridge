@@ -7,7 +7,12 @@ import java.net.SocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
+import org.apache.commons.daemon.Daemon;
+import org.apache.commons.daemon.DaemonContext;
+import org.apache.commons.daemon.DaemonInitException;
 import org.apache.log4j.Logger;
 import org.reficio.ws.client.TransmissionException;
 
@@ -15,7 +20,7 @@ import de.sciss.net.OSCListener;
 import de.sciss.net.OSCMessage;
 import de.sciss.net.OSCServer;
 
-public class MhBridge
+public class MhBridge implements Daemon, Runnable
 {
 
 	private final Logger log = Logger.getLogger(MhBridge.class);
@@ -31,6 +36,8 @@ public class MhBridge
 	private String soapEndpoint;
 	
 	private List<String> controls = new ArrayList<>();
+
+	private ExecutorService appExec;
 	
 	public static void main( String[] args ) throws IOException
     {
@@ -38,17 +45,23 @@ public class MhBridge
 		app.run();
     }
 	
-	public void run() throws IOException {
+	public void run() {
 		log.info("MhBridge starting...");
 		// load properties
 		Properties properties = new Properties();
 		InputStream in = getClass().getResourceAsStream("/mhbridge.properties");
 		if (in == null) {
-			log.fatal("unable to load properties");
+			log.fatal("unable to open properties file");
 			return;
 		}
-		properties.load(in);
-		in.close();
+		
+		try {
+			properties.load(in);
+			in.close();
+		} catch (IOException e) {
+			log.fatal("unable to read properties from file");
+			return;
+		}
 		
 		soapEndpoint = properties.getProperty("misterHouseSoapEndpoint");
 		oscPort = Integer.parseInt(properties.getProperty("oscPort"));
@@ -105,17 +118,20 @@ public class MhBridge
 		        }
 		    });
 		 
-         c.start();
-         
-         log.info("ready & running.");
-         while (true) {
-        	 try {
-				Thread.sleep(500);
-			} catch (InterruptedException e) {
-				break;
-			}   	 
-         }
-         c.stop();
+		 try {
+	         c.start();
+	         log.info("ready & running.");
+	         while (true) {
+	        	 try {
+					Thread.sleep(500);
+				} catch (InterruptedException e) {
+					break;
+				}   	 
+	         }
+	         c.stop();
+		 } catch (IOException e) {
+			 log.fatal("error running osc server: "+e.getMessage(),e);
+		 }
      
 	}
 	
@@ -145,7 +161,6 @@ public class MhBridge
 			try {
 				setScale(mhItem,mhValue,txAddr);
 				mhc.control(mhItem,mhValue);
-//				sendMessage(key, 1, txAddr);
 				break;
 			} catch (TransmissionException e) {
 				log.error("transmission error: "+e.getMessage(),e);
@@ -202,5 +217,26 @@ public class MhBridge
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
+	}
+
+	@Override
+	public void destroy() {
+		
+	}
+
+	@Override
+	public void init(DaemonContext arg0) throws DaemonInitException, Exception {
+		
+	}
+
+	@Override
+	public void start() throws Exception {
+		appExec = Executors.newSingleThreadExecutor();
+		appExec.execute(this);
+	}
+
+	@Override
+	public void stop() throws Exception {
+		appExec.shutdownNow();
 	}
 }
